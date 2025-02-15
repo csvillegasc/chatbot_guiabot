@@ -1,55 +1,106 @@
-"""
-Chatbot de asistencia para encuestas de servicio al cliente
-
-Desarrollado por:
-Equipo 19
-
-"""
-
-#importa la clase FastAPI de la librería fastapi
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 import pandas as pd
 import nltk
-from nltk.tokenize import word_tokenize 
-from nltk.corpus import wordnet 
+nltk.data.find('tokenizers/punkt')
+from nltk.tokenize import word_tokenize
+from nltk.corpus import wordnet
 
-# Indicamos donde nltk buscará los datos
+
+# Cargar NLTK y descargar datos necesarios
 nltk.data.path.append("C:/Users/admin_bizagi06/AppData/Local/Programs/Python/Python312/Scripts/nltk_data")
-
-nltk.download('punkt')  # Paquete para dividir el texto en palabras
-nltk.download('wordnet')  # Paquete para buscar sinónimos en inglés
-
-# ✅ Cargar el archivo de datos normalizando la categoría
+nltk.download("punkt")
+nltk.download("wordnet")
+nltk.download("punkt_tab")
+# Cargar dataset
 def load_data():
     df = pd.read_csv("Dataset/Customer_support_data.csv")
-
-    # Convertir todas las categorías a minúsculas y eliminar espacios extra
-    df['category'] = df['category'].astype(str).str.strip().str.lower()
-
-    return df.fillna('').to_dict('records')
+    df["category"] = df["category"].astype(str).str.strip().str.lower()
+    return df.fillna("").to_dict("records")
 
 survey_list = load_data()
 
-# ✅ Función para encontrar sinónimos de una palabra
+# Función para obtener sinónimos
 def get_synonyms(word):
     synonyms = []
     for syn in wordnet.synsets(word):
         for lemma in syn.lemmas():
             synonyms.append(lemma.name())
-    return synonyms
+    return list(set(synonyms))
 
-# ✅ Creamos la aplicación
-app = FastAPI(
-    title="GuIAbot, tu asistente virtual",
-    description="Este es un chatbot que te ayudará a resolver tus dudas sobre las encuestas de servicio al cliente",
-    version="1.0.0"
-)
+# Crear la aplicación FastAPI
+app = FastAPI()
 
-# ✅ Ruta de inicio
-@app.get("/", tags=["Home"])
+# Interfaz HTML del chatbot
+html_content = """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GuIAbot - Chatbot de Encuestas</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
+        #chatbox { width: 80%; max-width: 500px; height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin: auto; text-align: left; }
+        #userInput { width: 70%; padding: 8px; }
+        button { padding: 8px; }
+        .user { color: blue; font-weight: bold; }
+        .bot { color: green; font-weight: bold; }
+        .error { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Bienvenido a GuIAbot</h1>
+    <div id="chatbox"></div>
+    <input type="text" id="userInput" placeholder="Escribe tu pregunta aquí...">
+    <button onclick="sendMessage()">Enviar</button>
+
+    <script>
+        function sendMessage() {
+            let input = document.getElementById("userInput").value;
+            if (input.trim() === "") return;
+
+            let chatbox = document.getElementById("chatbox");
+            chatbox.innerHTML += "<p class='user'>Tú: " + input + "</p>";
+
+            fetch("/chatbot/?query=" + encodeURIComponent(input))
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error("Error en la API: " + response.statusText);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (!data || !data.respuesta) {
+                        chatbox.innerHTML += "<p class='error'>Error: Respuesta vacía de la API</p>";
+                        return;
+                    }
+
+                    chatbox.innerHTML += "<p class='bot'>GuIAbot: " + data.respuesta + "</p>";
+
+                    if (data.encuestas && data.encuestas.length > 0) {
+                        data.encuestas.forEach(encuesta => {
+                            chatbox.innerHTML += "<p class='bot'>Encuesta ID: " + encuesta["Unique id"] + " (Categoría: " + encuesta.category + ")</p>";
+
+                        });
+                    }
+                    chatbox.scrollTop = chatbox.scrollHeight;
+                })
+                .catch(error => {
+                    chatbox.innerHTML += "<p class='error'>Error al obtener respuesta: " + error.message + "</p>";
+                });
+
+            document.getElementById("userInput").value = "";
+        }
+    </script>
+</body>
+</html>
+"""
+
+# Ruta de inicio con la interfaz del chatbot
+@app.get("/", response_class=HTMLResponse)
 def home():
-    return HTMLResponse(content="<h1> Bienvenido a GuIAbot </h1>")
+    return HTMLResponse(content=html_content)
 
 # ✅ Ruta para obtener todas las encuestas
 @app.get("/survey/", tags=["Encuestas"])
@@ -58,28 +109,20 @@ def get_survey():
         raise HTTPException(status_code=500, detail="No se encontraron encuestas")
     return survey_list
 
-# ✅ Ruta para obtener una encuesta por su ID
+# ✅ Ruta para obtener una encuesta por ID
 @app.get("/survey/{survey_id}", tags=["Encuestas"])
-def get_survey(survey_id: str):
+def get_survey_by_id(survey_id: str):
     encuesta = next((m for m in survey_list if m["Unique id"] == survey_id), None)
-
+    
     if encuesta is None:
         raise HTTPException(status_code=404, detail="Encuesta no encontrada")
 
     return encuesta
 
-# ✅ Nueva ruta para depurar y ver todas las categorías en la API
-@app.get("/survey/category/debug/", tags=["Debug"])
-def debug_categories():
-    categories = {m.get("category", "SIN CATEGORÍA") for m in survey_list}
-    return {"categorias_encontradas": list(categories)}
-
-# ✅ Ruta para buscar encuestas por categoría
+# ✅ Ruta para obtener encuestas por categoría
 @app.get("/survey/category/", tags=["Encuestas"])
 def get_survey_by_category(category: str):
-    category = category.strip().lower()  # Asegurar que la búsqueda sea correcta
-
-    # Buscar encuestas que contengan la categoría exacta
+    category = category.strip().lower()  # Normalizar la búsqueda
     results = [m for m in survey_list if "category" in m and category in m["category"]]
 
     if not results:
@@ -87,22 +130,31 @@ def get_survey_by_category(category: str):
 
     return results
 
-# ✅ Ruta del chatbot
-@app.get("/chatbot/", tags=["Chatbot"]) 
-def chatbot(query: str):
+# ✅ Ruta para el chatbot
+@app.get("/chatbot/", tags=["Chatbot"])
+def chatbot(query: str = Query(..., title="Consulta del usuario")):
     try:
+        print(f"📌 Pregunta recibida: {query}")  # Depuración en la terminal
+         # Verifica si la consulta es un ID de encuesta directamente
+        encuesta_por_id = next((m for m in survey_list if m["Unique id"] == query.strip()), None)
+        if encuesta_por_id:
+            return JSONResponse(content={"respuesta": "Aquí está la información de la encuesta:", "encuestas": [encuesta_por_id]})
+        
+         # Si no es un ID, sigue con la búsqueda normal
         query_words = word_tokenize(query.lower())
+       
+        synonyms = set(query_words)
+        for word in query_words:
+            synonyms.update(get_synonyms(word))
 
-        # Buscar sinónimos de cada palabra
-        synonyms = {word for q in query_words for word in get_synonyms(q)} | set(query_words)
-
-        # Filtramos las encuestas buscando coincidencias en la categoría
+        # Filtrar encuestas que coincidan con la consulta
         results = [m for m in survey_list if "category" in m and any(s in m["category"] for s in synonyms)]
 
-        return JSONResponse(content={
-            "respuesta": "Aquí tienes algunas encuestas que podrían ayudarte" if results else "No se encontraron encuestas que coincidan con tu búsqueda",
-            "encuestas": results
-        })
-    
+        if not results:
+            return JSONResponse(content={"respuesta": "No se encontraron encuestas que coincidan con tu búsqueda", "encuestas": []})
+
+        return JSONResponse(content={"respuesta": "Aquí tienes algunas encuestas que podrían ayudarte", "encuestas": results})
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error en el chatbot: {str(e)}")
+        print(f"⚠️ Error en chatbot: {str(e)}")  # Mostrar error en la terminal
+        return JSONResponse(content={"error": str(e)}, status_code=500)
