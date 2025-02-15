@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 import pandas as pd
 import nltk
 nltk.data.find('tokenizers/punkt')
@@ -31,71 +32,79 @@ def get_synonyms(word):
 # Crear la aplicación FastAPI
 app = FastAPI()
 
+# Montar la carpeta static para servir imágenes locales
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # Interfaz HTML del chatbot
+
 html_content = """
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GuIAbot - Chatbot de Encuestas</title>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; margin: 20px; }
-        #chatbox { width: 80%; max-width: 500px; height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin: auto; text-align: left; }
-        #userInput { width: 70%; padding: 8px; }
-        button { padding: 8px; }
-        .user { color: blue; font-weight: bold; }
-        .bot { color: green; font-weight: bold; }
-        .error { color: red; font-weight: bold; }
-    </style>
-</head>
-<body>
-    <h1>Bienvenido a GuIAbot</h1>
-    <div id="chatbox"></div>
-    <input type="text" id="userInput" placeholder="Escribe tu pregunta aquí...">
-    <button onclick="sendMessage()">Enviar</button>
+ <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>GuIAbot - Chatbot de Encuestas</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; margin: 20px; display: flex; flex-direction: column; align-items: center; background-color: black; color: white; }
+            #header-container { display: flex; justify-content: center; width: 80%; max-width: 1000px; }
+            h1 { text-align: center; color: white; }
+            #container { display: flex; justify-content: space-between; align-items: center; width: 80%; max-width: 1000px; }
+            #chatbox-container { width: 65%; }
+            #chatbox { width: 100%; height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; text-align: left; background-color: white; color: black; }
+            #userInput { width: 70%; padding: 8px; }
+            button { padding: 8px; }
+            .user { color: cyan; font-weight: bold; }
+            .bot { color: lime; font-weight: bold; }
+            .error { color: red; font-weight: bold; }
+            #chat-image { width: 200px; height: auto; }
+        </style>
+    </head>
+    <body>
+        <div id="header-container">
+            <h1>Bienvenido a GuIAbot</h1>
+        </div>
+        <div id="container">
+            <div id="chatbox-container">
+                <div id="chatbox"></div>
+                <input type="text" id="userInput" placeholder="Escribe tu pregunta aquí...">
+                <button onclick="sendMessage()">Enviar</button>
+            </div>
+            <img id="chat-image" src="/static/chatbot_image.jpg" alt="Chatbot Image">
+        </div>
+        <script>
+            function sendMessage() {
+                let input = document.getElementById("userInput").value;
+                if (input.trim() === "") return;
 
-    <script>
-        function sendMessage() {
-            let input = document.getElementById("userInput").value;
-            if (input.trim() === "") return;
+                let chatbox = document.getElementById("chatbox");
+                chatbox.innerHTML += "<p class='user'>Tú: " + input + "</p>";
 
-            let chatbox = document.getElementById("chatbox");
-            chatbox.innerHTML += "<p class='user'>Tú: " + input + "</p>";
+                fetch("/chatbot/?query=" + encodeURIComponent(input))
+                    .then(response => response.json())
+                    .then(data => {
+                        if (!data || !data.respuesta) {
+                            chatbox.innerHTML += "<p class='error'>Error: Respuesta vacía de la API</p>";
+                            return;
+                        }
 
-            fetch("/chatbot/?query=" + encodeURIComponent(input))
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error("Error en la API: " + response.statusText);
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (!data || !data.respuesta) {
-                        chatbox.innerHTML += "<p class='error'>Error: Respuesta vacía de la API</p>";
-                        return;
-                    }
+                        chatbox.innerHTML += "<p class='bot'>GuIAbot: " + data.respuesta + "</p>";
 
-                    chatbox.innerHTML += "<p class='bot'>GuIAbot: " + data.respuesta + "</p>";
-
-                    if (data.encuestas && data.encuestas.length > 0) {
-                        data.encuestas.forEach(encuesta => {
-                            chatbox.innerHTML += "<p class='bot'>Encuesta ID: " + encuesta["Unique id"] + " (Categoría: " + encuesta.category + ")</p>";
-
-                        });
-                    }
-                    chatbox.scrollTop = chatbox.scrollHeight;
-                })
-                .catch(error => {
-                    chatbox.innerHTML += "<p class='error'>Error al obtener respuesta: " + error.message + "</p>";
-                });
-
-            document.getElementById("userInput").value = "";
-        }
-    </script>
-</body>
-</html>
-"""
+                        if (data.encuestas && data.encuestas.length > 0) {
+                            data.encuestas.forEach(encuesta => {
+                                chatbox.innerHTML += "<p class='bot'>Encuesta ID: " + encuesta["Unique id"] + " (Categoría: " + encuesta.category + ")</p>";
+                            });
+                        }
+                        chatbox.scrollTop = chatbox.scrollHeight;
+                    })
+                    .catch(error => {
+                        chatbox.innerHTML += "<p class='error'>Error al obtener respuesta: " + error.message + "</p>";
+                    });
+                document.getElementById("userInput").value = "";
+            }
+        </script>
+    </body>
+    </html>
+    """
 
 # Ruta de inicio con la interfaz del chatbot
 @app.get("/", response_class=HTMLResponse)
