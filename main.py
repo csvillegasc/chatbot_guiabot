@@ -1,4 +1,8 @@
 """
+Chatbot de asistencia para encuestas de servicio al cliente
+
+Desarrollado por:
+Equipo 19
 
 """
 
